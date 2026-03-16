@@ -24,6 +24,8 @@ export default function App() {
   const [bulkCopiedId, setBulkCopiedId] = useState<string | null>(null);
   const [isExportCopied, setIsExportCopied] = useState(false);
   const [isClearModalOpen, setIsClearModalOpen] = useState(false);
+  const [translationStyle, setTranslationStyle] = useState<'Natural' | 'Formal'>('Natural');
+  const [recipientGender, setRecipientGender] = useState<'Male' | 'Female'>('Male');
   
   const [isDarkMode, setIsDarkMode] = useState(false);
   const [sourceLang, setSourceLang] = useState<'en-US' | 'zh-TW'>('en-US');
@@ -32,6 +34,7 @@ export default function App() {
   const recognitionRef = useRef<any>(null);
   const manualStopRef = useRef(false);
   const textAreaRef = useRef<HTMLTextAreaElement>(null);
+  const silenceTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
     // Load dark mode preference
@@ -62,7 +65,20 @@ export default function App() {
       recognition.continuous = true;
       recognition.interimResults = false;
       
+      const resetSilenceTimer = () => {
+        if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
+        silenceTimerRef.current = setTimeout(() => {
+          manualStopRef.current = true;
+          recognition.stop();
+        }, 5000);
+      };
+
+      recognition.onstart = () => {
+        resetSilenceTimer();
+      };
+
       recognition.onresult = (event: any) => {
+        resetSilenceTimer();
         let finalTranscript = '';
         for (let i = event.resultIndex; i < event.results.length; ++i) {
           if (event.results[i].isFinal) {
@@ -77,6 +93,7 @@ export default function App() {
 
       recognition.onerror = (event: any) => {
         console.error('Speech recognition error', event.error);
+        if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
         if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
           manualStopRef.current = true;
           setIsListening(false);
@@ -84,6 +101,7 @@ export default function App() {
       };
 
       recognition.onend = () => {
+        if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
         setIsListening(false);
       };
 
@@ -111,6 +129,7 @@ export default function App() {
   const toggleListening = () => {
     if (isListening) {
       manualStopRef.current = true;
+      if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
       recognitionRef.current?.stop();
       setIsListening(false);
     } else {
@@ -137,16 +156,24 @@ export default function App() {
 
     if (isListening) {
       manualStopRef.current = true;
+      if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
       recognitionRef.current?.stop();
       setIsListening(false);
     }
 
-    setInputText('');
     setIsTranslating(true);
     setError(null);
 
     const sourceName = sourceLang === 'en-US' ? 'English' : 'Taiwanese Traditional Chinese';
     const targetName = sourceLang === 'en-US' ? 'Taiwanese Traditional Chinese' : 'English';
+
+    const styleInstruction = translationStyle === 'Formal'
+      ? "- Style: Formal. Use high-level honorifics (e.g., 您), official structure, and polite phrasing suitable for writing to a landlord, government official, or professor in Taiwan."
+      : "- Style: Conversational and natural. Polite but direct.";
+
+    const genderInstruction = recipientGender === 'Female'
+      ? "- Gender Context: The recipient is female. Ensure the written translation uses the feminine '妳' for 'you' in natural contexts. Adjust formal honorifics appropriately (e.g., using '女士' or '小姐' for formal correspondence)."
+      : "- Gender Context: The recipient is male. Ensure the written translation uses the masculine '你' for 'you' in natural contexts. Adjust formal honorifics appropriately (e.g., using '先生' for formal correspondence).";
 
     try {
       const response = await ai.models.generateContent({
@@ -179,8 +206,8 @@ Return ONLY a JSON object with the following keys:
 - "pinyin": The Hanyu Pinyin for the Chinese text (without the Hanzi characters).
 
 Tone and Style:
-- Conversational and natural.
-- Polite but direct.
+${styleInstruction}
+${genderInstruction}
 - For English translations, use modern, idiomatic English.`,
           responseMimeType: 'application/json',
           responseSchema: {
@@ -202,6 +229,7 @@ Tone and Style:
         parsedResult.id = Date.now().toString();
         parsedResult.timestamp = Date.now();
         setResult(parsedResult);
+        setInputText(''); // Clear input text only after successful translation
       } else {
         throw new Error('No response from AI');
       }
@@ -343,12 +371,46 @@ Tone and Style:
               className="w-full min-h-[16rem] p-3 bg-transparent border-0 focus:ring-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/50 rounded-lg resize-none text-lg placeholder:text-stone-400 dark:placeholder:text-stone-500 dark:text-white"
             />
           </div>
-          <div className="p-4 bg-stone-50 dark:bg-[#1e1e1e] border-t border-stone-100 dark:border-stone-800 flex justify-end">
+          <div className="p-4 bg-stone-50 dark:bg-[#1e1e1e] border-t border-stone-100 dark:border-stone-800 flex flex-col lg:flex-row justify-between items-center gap-4">
+            <div className="flex flex-col sm:flex-row items-center gap-4 w-full lg:w-auto">
+              <div className="flex items-center gap-2 bg-stone-200/50 dark:bg-stone-800/50 p-1 rounded-lg w-full sm:w-auto">
+                <button
+                  onClick={() => setTranslationStyle('Natural')}
+                  className={`flex-1 sm:flex-none px-4 py-2 text-sm font-medium rounded-md transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 ${translationStyle === 'Natural' ? 'bg-white dark:bg-stone-600 shadow-sm text-stone-900 dark:text-white' : 'text-stone-500 dark:text-stone-400 hover:text-stone-700 dark:hover:text-stone-200'}`}
+                  aria-label="Natural Style"
+                >
+                  Natural
+                </button>
+                <button
+                  onClick={() => setTranslationStyle('Formal')}
+                  className={`flex-1 sm:flex-none px-4 py-2 text-sm font-medium rounded-md transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 ${translationStyle === 'Formal' ? 'bg-white dark:bg-stone-600 shadow-sm text-stone-900 dark:text-white' : 'text-stone-500 dark:text-stone-400 hover:text-stone-700 dark:hover:text-stone-200'}`}
+                  aria-label="Formal Style"
+                >
+                  Formal
+                </button>
+              </div>
+              <div className="flex items-center gap-2 bg-stone-200/50 dark:bg-stone-800/50 p-1 rounded-lg w-full sm:w-auto">
+                <button
+                  onClick={() => setRecipientGender('Male')}
+                  className={`flex-1 sm:flex-none px-4 py-2 text-sm font-medium rounded-md transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 ${recipientGender === 'Male' ? 'bg-white dark:bg-stone-600 shadow-sm text-stone-900 dark:text-white' : 'text-stone-500 dark:text-stone-400 hover:text-stone-700 dark:hover:text-stone-200'}`}
+                  aria-label="Male Recipient"
+                >
+                  Male
+                </button>
+                <button
+                  onClick={() => setRecipientGender('Female')}
+                  className={`flex-1 sm:flex-none px-4 py-2 text-sm font-medium rounded-md transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 ${recipientGender === 'Female' ? 'bg-white dark:bg-stone-600 shadow-sm text-stone-900 dark:text-white' : 'text-stone-500 dark:text-stone-400 hover:text-stone-700 dark:hover:text-stone-200'}`}
+                  aria-label="Female Recipient"
+                >
+                  Female
+                </button>
+              </div>
+            </div>
             <button
               onClick={handleTranslate}
               disabled={isTranslating || !inputText.trim()}
               aria-label="Correct and Translate"
-              className="mt-2 sm:mt-4 flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white px-6 py-2.5 rounded-xl font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-2 dark:focus-visible:ring-offset-[#1e1e1e]"
+              className="w-full sm:w-auto flex justify-center items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white px-6 py-2.5 rounded-xl font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-2 dark:focus-visible:ring-offset-[#1e1e1e]"
             >
               {isTranslating ? (
                 <>
