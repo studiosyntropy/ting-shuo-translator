@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { GoogleGenAI, Type } from '@google/genai';
-import { Copy, Mic, MicOff, Loader2, RefreshCw, Check, Moon, Sun, ArrowRightLeft, Star, Trash2 } from 'lucide-react';
+import { Copy, Mic, MicOff, Loader2, RefreshCw, Check, Moon, Sun, ArrowRightLeft, Star, Trash2, ClipboardCopy } from 'lucide-react';
 
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
@@ -21,12 +21,14 @@ export default function App() {
   const [result, setResult] = useState<TranslationResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [copiedField, setCopiedField] = useState<string | null>(null);
+  const [bulkCopiedId, setBulkCopiedId] = useState<string | null>(null);
   
   const [isDarkMode, setIsDarkMode] = useState(false);
   const [sourceLang, setSourceLang] = useState<'en-US' | 'zh-TW'>('en-US');
   const [favorites, setFavorites] = useState<TranslationResult[]>([]);
 
   const recognitionRef = useRef<any>(null);
+  const manualStopRef = useRef(false);
 
   useEffect(() => {
     // Load dark mode preference
@@ -75,11 +77,23 @@ export default function App() {
 
       recognition.onerror = (event: any) => {
         console.error('Speech recognition error', event.error);
-        setIsListening(false);
+        if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
+          manualStopRef.current = true;
+          setIsListening(false);
+        }
       };
 
       recognition.onend = () => {
-        setIsListening(false);
+        if (!manualStopRef.current) {
+          try {
+            recognition.start();
+          } catch (e) {
+            console.error('Failed to restart recognition', e);
+            setIsListening(false);
+          }
+        } else {
+          setIsListening(false);
+        }
       };
 
       recognitionRef.current = recognition;
@@ -104,11 +118,13 @@ export default function App() {
 
   const toggleListening = () => {
     if (isListening) {
+      manualStopRef.current = true;
       recognitionRef.current?.stop();
       setIsListening(false);
     } else {
       if (recognitionRef.current) {
         try {
+          manualStopRef.current = false;
           // Update the SpeechRecognition language parameter to match the sourceLang
           recognitionRef.current.lang = sourceLang === 'zh-TW' ? 'cmn-Hant-TW' : 'en-US';
           recognitionRef.current.start();
@@ -203,6 +219,13 @@ Tone and Style:
     setTimeout(() => setCopiedField(null), 2000);
   };
 
+  const handleBulkCopy = (fav: TranslationResult) => {
+    const textToCopy = `Source: ${fav.corrected_source}\nTranslation: ${fav.translation}\nPinyin: ${fav.pinyin}`;
+    navigator.clipboard.writeText(textToCopy);
+    setBulkCopiedId(fav.id || null);
+    setTimeout(() => setBulkCopiedId(null), 2000);
+  };
+
   const toggleFavorite = () => {
     if (!result) return;
     
@@ -240,7 +263,7 @@ Tone and Style:
         </button>
       </nav>
 
-      <div className="max-w-4xl mx-auto space-y-8 p-4 md:p-8 pt-0">
+      <div className="max-w-4xl mx-auto space-y-8 p-6 md:p-12 pt-4">
         <header className="text-center space-y-2">
           <h1 className="text-3xl md:text-4xl font-semibold tracking-tight text-emerald-900 dark:text-emerald-400">
             聽說 TīngShuō
@@ -251,28 +274,28 @@ Tone and Style:
         </header>
 
         <div className="bg-white dark:bg-[#1e1e1e] rounded-2xl shadow-sm border border-stone-200 dark:border-stone-800 overflow-hidden transition-colors">
-          <div className="p-4 border-b border-stone-100 dark:border-stone-800 bg-stone-50/50 dark:bg-[#1e1e1e] flex flex-col sm:flex-row justify-between items-center gap-4">
+          <div className="p-6 border-b border-stone-100 dark:border-stone-800 bg-stone-50/50 dark:bg-[#1e1e1e] flex flex-col items-center gap-6 sm:flex-row sm:justify-between">
             
             {/* Language Swap */}
-            <div className="flex items-center gap-3 bg-stone-100 dark:bg-stone-800 p-1 rounded-xl">
-              <span className="px-3 py-1.5 text-sm font-medium rounded-lg bg-white dark:bg-stone-700 shadow-sm text-stone-900 dark:text-stone-100">
+            <div className="flex items-center gap-3 bg-stone-100 dark:bg-stone-800 p-2 rounded-xl w-full sm:w-auto justify-center">
+              <span className="px-3 py-2 text-sm font-medium rounded-lg bg-white dark:bg-stone-700 shadow-sm text-stone-900 dark:text-stone-100 text-center flex-1 sm:flex-none">
                 {sourceLang === 'en-US' ? 'English' : 'Traditional Chinese'}
               </span>
               <button 
                 onClick={toggleLanguage}
-                className="p-1.5 hover:bg-stone-200 dark:hover:bg-stone-600 rounded-md transition-colors"
+                className="p-2 hover:bg-stone-200 dark:hover:bg-stone-600 rounded-md transition-colors shrink-0"
                 title="Swap Languages"
               >
-                <ArrowRightLeft className="w-4 h-4 text-stone-600 dark:text-stone-300" />
+                <ArrowRightLeft className="w-5 h-5 text-stone-600 dark:text-stone-300" />
               </button>
-              <span className="px-3 py-1.5 text-sm font-medium rounded-lg bg-white dark:bg-stone-700 shadow-sm text-stone-900 dark:text-stone-100">
+              <span className="px-3 py-2 text-sm font-medium rounded-lg bg-white dark:bg-stone-700 shadow-sm text-stone-900 dark:text-stone-100 text-center flex-1 sm:flex-none">
                 {sourceLang === 'en-US' ? 'Traditional Chinese' : 'English'}
               </span>
             </div>
 
             <button
               onClick={toggleListening}
-              className={`flex items-center gap-2 px-4 py-2 rounded-full text-sm font-medium transition-colors ${
+              className={`flex items-center justify-center gap-2 px-6 py-3 rounded-full text-base font-medium transition-colors w-full sm:w-auto my-2 sm:my-0 ${
                 isListening 
                   ? 'bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400 hover:bg-red-200 dark:hover:bg-red-900/50' 
                   : 'bg-stone-200 dark:bg-stone-800 text-stone-700 dark:text-stone-300 hover:bg-stone-300 dark:hover:bg-stone-700'
@@ -289,12 +312,12 @@ Tone and Style:
               )}
             </button>
           </div>
-          <div className="p-4">
+          <div className="p-4 sm:p-6">
             <textarea
               value={inputText}
               onChange={(e) => setInputText(e.target.value)}
               placeholder={sourceLang === 'zh-TW' ? '請在此輸入或對話 (繁體中文)...' : 'Type or dictate your text here (English)...'}
-              className="w-full h-32 p-3 bg-transparent border-0 focus:ring-0 resize-none text-lg placeholder:text-stone-400 dark:placeholder:text-stone-500 dark:text-white"
+              className="w-full min-h-[16rem] p-3 bg-transparent border-0 focus:ring-0 resize-none text-lg placeholder:text-stone-400 dark:placeholder:text-stone-500 dark:text-white"
             />
           </div>
           <div className="p-4 bg-stone-50 dark:bg-[#1e1e1e] border-t border-stone-100 dark:border-stone-800 flex justify-end">
@@ -322,7 +345,14 @@ Tone and Style:
           </div>
         )}
 
-        {result && (
+        {isTranslating && (
+          <div className="flex flex-col items-center justify-center py-16 space-y-4 bg-white dark:bg-[#1e1e1e] rounded-2xl shadow-sm border border-stone-200 dark:border-stone-800 transition-colors">
+            <Loader2 className="w-12 h-12 animate-spin text-emerald-600 dark:text-emerald-400" />
+            <p className="text-lg font-medium text-stone-600 dark:text-stone-300">Processing translation...</p>
+          </div>
+        )}
+
+        {!isTranslating && result && (
           <div className="space-y-4">
             <div className="flex justify-end">
               <button
@@ -375,13 +405,22 @@ Tone and Style:
                     <div className="text-xs font-medium text-stone-500 dark:text-stone-400 uppercase tracking-wider bg-stone-100 dark:bg-stone-800 px-2 py-1 rounded">
                       {fav.sourceLang === 'en-US' ? 'EN → ZH' : 'ZH → EN'}
                     </div>
-                    <button
-                      onClick={() => fav.id && deleteFavorite(fav.id)}
-                      className="text-stone-400 hover:text-red-500 transition-colors p-1"
-                      title="Delete Favorite"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => handleBulkCopy(fav)}
+                        className="text-stone-400 hover:text-emerald-500 transition-colors p-1 flex items-center gap-1"
+                        title="Bulk Copy"
+                      >
+                        {bulkCopiedId === fav.id ? <Check className="w-4 h-4 text-emerald-500" /> : <ClipboardCopy className="w-4 h-4" />}
+                      </button>
+                      <button
+                        onClick={() => fav.id && deleteFavorite(fav.id)}
+                        className="text-stone-400 hover:text-red-500 transition-colors p-1"
+                        title="Delete Favorite"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
                   </div>
                   
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -395,7 +434,7 @@ Tone and Style:
                     </div>
                     <div>
                       <h4 className="text-xs font-medium text-stone-500 dark:text-stone-400 mb-1">Pinyin</h4>
-                      <p className="text-sm text-yellow-600 dark:text-yellow-300 font-medium">{fav.pinyin}</p>
+                      <p className="text-base md:text-lg text-yellow-600 dark:text-yellow-300 font-medium">{fav.pinyin}</p>
                     </div>
                   </div>
                 </div>
@@ -427,7 +466,7 @@ function OutputCard({ title, content, onCopy, isCopied, isPinyin = false }: { ti
           value={content}
           className={`w-full h-48 md:h-64 p-0 bg-transparent border-0 focus:ring-0 resize-none leading-relaxed ${
             isPinyin 
-              ? 'text-stone-800 dark:text-yellow-300 font-medium' 
+              ? 'text-lg md:text-xl text-stone-800 dark:text-yellow-300 font-medium' 
               : 'text-stone-800 dark:text-white'
           }`}
         />
