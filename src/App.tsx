@@ -16,6 +16,7 @@ interface TranslationResult {
 
 export default function App() {
   const [inputText, setInputText] = useState('');
+  const [interimText, setInterimText] = useState('');
   const [isListening, setIsListening] = useState(false);
   const [isTranslating, setIsTranslating] = useState(false);
   const [result, setResult] = useState<TranslationResult | null>(null);
@@ -61,17 +62,20 @@ export default function App() {
       
       recognition.onresult = (event: any) => {
         let finalTranscript = '';
-        let interimTranscript = '';
+        let currentInterim = '';
         for (let i = event.resultIndex; i < event.results.length; ++i) {
           if (event.results[i].isFinal) {
             finalTranscript += event.results[i][0].transcript;
           } else {
-            interimTranscript += event.results[i][0].transcript;
+            currentInterim += event.results[i][0].transcript;
           }
         }
         
         if (finalTranscript) {
           setInputText((prev) => prev + (prev ? ' ' : '') + finalTranscript);
+          setInterimText('');
+        } else {
+          setInterimText(currentInterim);
         }
       };
 
@@ -139,8 +143,17 @@ export default function App() {
   };
 
   const handleTranslate = async () => {
-    if (!inputText.trim()) return;
+    const fullText = (inputText + (interimText ? ' ' + interimText : '')).trim();
+    if (!fullText) return;
 
+    if (isListening) {
+      manualStopRef.current = true;
+      recognitionRef.current?.stop();
+      setIsListening(false);
+    }
+
+    setInputText(fullText);
+    setInterimText('');
     setIsTranslating(true);
     setError(null);
     setResult(null);
@@ -151,7 +164,7 @@ export default function App() {
     try {
       const response = await ai.models.generateContent({
         model: 'gemini-3.1-pro-preview',
-        contents: `Process the following raw speech-to-text input:\n\n"${inputText}"`,
+        contents: `Process the following raw speech-to-text input:\n\n"${fullText}"`,
         config: {
           systemInstruction: `You are an expert bilingual translator and editor specializing in English and Taiwanese Traditional Chinese. Your goal is to process Speech-to-Text (STT) input and provide high-quality, natural-sounding translations and corrections.
 
@@ -220,7 +233,7 @@ Tone and Style:
   };
 
   const handleBulkCopy = (fav: TranslationResult) => {
-    const textToCopy = `Source: ${fav.corrected_source}\nTranslation: ${fav.translation}\nPinyin: ${fav.pinyin}`;
+    const textToCopy = `Source: ${fav.corrected_source}\n\nTranslation: ${fav.translation}\n\nPinyin: ${fav.pinyin}`;
     navigator.clipboard.writeText(textToCopy);
     setBulkCopiedId(fav.id || null);
     setTimeout(() => setBulkCopiedId(null), 2000);
@@ -314,8 +327,11 @@ Tone and Style:
           </div>
           <div className="p-4 sm:p-6">
             <textarea
-              value={inputText}
-              onChange={(e) => setInputText(e.target.value)}
+              value={inputText + (interimText ? (inputText ? ' ' : '') + interimText : '')}
+              onChange={(e) => {
+                setInputText(e.target.value);
+                setInterimText('');
+              }}
               placeholder={sourceLang === 'zh-TW' ? '請在此輸入或對話 (繁體中文)...' : 'Type or dictate your text here (English)...'}
               className="w-full min-h-[16rem] p-3 bg-transparent border-0 focus:ring-0 resize-none text-lg placeholder:text-stone-400 dark:placeholder:text-stone-500 dark:text-white"
             />
@@ -323,8 +339,8 @@ Tone and Style:
           <div className="p-4 bg-stone-50 dark:bg-[#1e1e1e] border-t border-stone-100 dark:border-stone-800 flex justify-end">
             <button
               onClick={handleTranslate}
-              disabled={isTranslating || !inputText.trim()}
-              className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white px-6 py-2.5 rounded-xl font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              disabled={isTranslating || (!inputText.trim() && !interimText.trim())}
+              className="mt-2 sm:mt-4 flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white px-6 py-2.5 rounded-xl font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {isTranslating ? (
                 <>
@@ -332,7 +348,7 @@ Tone and Style:
                 </>
               ) : (
                 <>
-                  <RefreshCw className="w-5 h-5" /> Translate & Correct
+                  <RefreshCw className="w-5 h-5" /> Correct & Translate
                 </>
               )}
             </button>
