@@ -1,0 +1,7 @@
+{
+  "name": "聽說 TīngShuō",
+  "description": "A speech-to-text translation app for Taiwan, specializing in agriculture and syntropic agroforestry terminology. Auto-corrects and translates between English and Traditional Chinese, providing English, Traditional Chinese, and Pinyin outputs.",
+  "requestFramePermissions": [
+    "microphone"
+  ]
+}

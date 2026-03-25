@@ -177,7 +177,7 @@ export default function App() {
 
     try {
       const response = await ai.models.generateContent({
-        model: 'gemini-3.1-flash-lite-preview',
+        model: 'gemini-3.1-pro-preview',
         contents: `Process the following raw speech-to-text input:\n\n"${fullText}"`,
         config: {
           systemInstruction: `You are an expert bilingual translator and editor specializing in English and Taiwanese Traditional Chinese. Your goal is to process Speech-to-Text (STT) input and provide high-quality, natural-sounding translations and corrections.

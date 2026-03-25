@@ -16,16 +16,13 @@ interface TranslationResult {
 
 export default function App() {
   const [inputText, setInputText] = useState('');
+  const [interimText, setInterimText] = useState('');
   const [isListening, setIsListening] = useState(false);
   const [isTranslating, setIsTranslating] = useState(false);
   const [result, setResult] = useState<TranslationResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [copiedField, setCopiedField] = useState<string | null>(null);
   const [bulkCopiedId, setBulkCopiedId] = useState<string | null>(null);
-  const [isExportCopied, setIsExportCopied] = useState(false);
-  const [isClearModalOpen, setIsClearModalOpen] = useState(false);
-  const [translationStyle, setTranslationStyle] = useState<'Natural' | 'Formal'>('Natural');
-  const [recipientGender, setRecipientGender] = useState<'Male' | 'Female'>('Male');
   
   const [isDarkMode, setIsDarkMode] = useState(false);
   const [sourceLang, setSourceLang] = useState<'en-US' | 'zh-TW'>('en-US');
@@ -33,8 +30,6 @@ export default function App() {
 
   const recognitionRef = useRef<any>(null);
   const manualStopRef = useRef(false);
-  const textAreaRef = useRef<HTMLTextAreaElement>(null);
-  const silenceTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
     // Load dark mode preference
@@ -63,37 +58,29 @@ export default function App() {
     if (SpeechRecognition) {
       const recognition = new SpeechRecognition();
       recognition.continuous = true;
-      recognition.interimResults = false;
+      recognition.interimResults = true;
       
-      const resetSilenceTimer = () => {
-        if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
-        silenceTimerRef.current = setTimeout(() => {
-          manualStopRef.current = true;
-          recognition.stop();
-        }, 5000);
-      };
-
-      recognition.onstart = () => {
-        resetSilenceTimer();
-      };
-
       recognition.onresult = (event: any) => {
-        resetSilenceTimer();
         let finalTranscript = '';
+        let currentInterim = '';
         for (let i = event.resultIndex; i < event.results.length; ++i) {
           if (event.results[i].isFinal) {
             finalTranscript += event.results[i][0].transcript;
+          } else {
+            currentInterim += event.results[i][0].transcript;
           }
         }
         
         if (finalTranscript) {
           setInputText((prev) => prev + (prev ? ' ' : '') + finalTranscript);
+          setInterimText('');
+        } else {
+          setInterimText(currentInterim);
         }
       };
 
       recognition.onerror = (event: any) => {
         console.error('Speech recognition error', event.error);
-        if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
         if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
           manualStopRef.current = true;
           setIsListening(false);
@@ -101,8 +88,16 @@ export default function App() {
       };
 
       recognition.onend = () => {
-        if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
-        setIsListening(false);
+        if (!manualStopRef.current) {
+          try {
+            recognition.start();
+          } catch (e) {
+            console.error('Failed to restart recognition', e);
+            setIsListening(false);
+          }
+        } else {
+          setIsListening(false);
+        }
       };
 
       recognitionRef.current = recognition;
@@ -123,13 +118,11 @@ export default function App() {
 
   const toggleLanguage = () => {
     setSourceLang(prev => prev === 'en-US' ? 'zh-TW' : 'en-US');
-    setInputText('');
   };
 
   const toggleListening = () => {
     if (isListening) {
       manualStopRef.current = true;
-      if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
       recognitionRef.current?.stop();
       setIsListening(false);
     } else {
@@ -138,7 +131,6 @@ export default function App() {
           manualStopRef.current = false;
           // Update the SpeechRecognition language parameter to match the sourceLang
           recognitionRef.current.lang = sourceLang === 'zh-TW' ? 'cmn-Hant-TW' : 'en-US';
-          recognitionRef.current.abort();
           recognitionRef.current.start();
           setIsListening(true);
         } catch (e) {
@@ -151,33 +143,27 @@ export default function App() {
   };
 
   const handleTranslate = async () => {
-    const fullText = inputText.trim();
+    const fullText = (inputText + (interimText ? ' ' + interimText : '')).trim();
     if (!fullText) return;
 
     if (isListening) {
       manualStopRef.current = true;
-      if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
       recognitionRef.current?.stop();
       setIsListening(false);
     }
 
+    setInputText(fullText);
+    setInterimText('');
     setIsTranslating(true);
     setError(null);
+    setResult(null);
 
     const sourceName = sourceLang === 'en-US' ? 'English' : 'Taiwanese Traditional Chinese';
     const targetName = sourceLang === 'en-US' ? 'Taiwanese Traditional Chinese' : 'English';
 
-    const styleInstruction = translationStyle === 'Formal'
-      ? "- Style: Formal. Use high-level honorifics (e.g., 您), official structure, and polite phrasing suitable for writing to a landlord, government official, or professor in Taiwan."
-      : "- Style: Conversational and natural. Polite but direct.";
-
-    const genderInstruction = recipientGender === 'Female'
-      ? "- Gender Context: The recipient is female. Ensure the written translation uses the feminine '妳' for 'you' in natural contexts. Adjust formal honorifics appropriately (e.g., using '女士' or '小姐' for formal correspondence)."
-      : "- Gender Context: The recipient is male. Ensure the written translation uses the masculine '你' for 'you' in natural contexts. Adjust formal honorifics appropriately (e.g., using '先生' for formal correspondence).";
-
     try {
       const response = await ai.models.generateContent({
-        model: 'gemini-3.1-flash-lite-preview',
+        model: 'gemini-3.1-pro-preview',
         contents: `Process the following raw speech-to-text input:\n\n"${fullText}"`,
         config: {
           systemInstruction: `You are an expert bilingual translator and editor specializing in English and Taiwanese Traditional Chinese. Your goal is to process Speech-to-Text (STT) input and provide high-quality, natural-sounding translations and corrections.
@@ -206,8 +192,8 @@ Return ONLY a JSON object with the following keys:
 - "pinyin": The Hanyu Pinyin for the Chinese text (without the Hanzi characters).
 
 Tone and Style:
-${styleInstruction}
-${genderInstruction}
+- Conversational and natural.
+- Polite but direct.
 - For English translations, use modern, idiomatic English.`,
           responseMimeType: 'application/json',
           responseSchema: {
@@ -229,7 +215,6 @@ ${genderInstruction}
         parsedResult.id = Date.now().toString();
         parsedResult.timestamp = Date.now();
         setResult(parsedResult);
-        setInputText(''); // Clear input text only after successful translation
       } else {
         throw new Error('No response from AI');
       }
@@ -238,9 +223,6 @@ ${genderInstruction}
       setError(err.message || 'An error occurred during translation.');
     } finally {
       setIsTranslating(false);
-      setTimeout(() => {
-        textAreaRef.current?.focus();
-      }, 10);
     }
   };
 
@@ -255,22 +237,6 @@ ${genderInstruction}
     navigator.clipboard.writeText(textToCopy);
     setBulkCopiedId(fav.id || null);
     setTimeout(() => setBulkCopiedId(null), 2000);
-  };
-
-  const handleExportAllFavorites = () => {
-    if (favorites.length === 0) return;
-    const textToCopy = favorites.map(fav => 
-      `Source: ${fav.corrected_source}\n\nTranslation: ${fav.translation}\n\nPinyin: ${fav.pinyin}`
-    ).join('\n\n----------------------------------------\n\n');
-    navigator.clipboard.writeText(textToCopy);
-    setIsExportCopied(true);
-    setTimeout(() => setIsExportCopied(false), 2000);
-  };
-
-  const handleClearAllFavorites = () => {
-    setFavorites([]);
-    localStorage.removeItem('favorites');
-    setIsClearModalOpen(false);
   };
 
   const toggleFavorite = () => {
@@ -303,7 +269,7 @@ ${genderInstruction}
       <nav className="p-4 flex justify-end max-w-4xl mx-auto">
         <button
           onClick={toggleDarkMode}
-          className="p-2 rounded-full bg-stone-200 dark:bg-stone-800 text-stone-700 dark:text-stone-300 hover:bg-stone-300 dark:hover:bg-stone-700 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500"
+          className="p-2 rounded-full bg-stone-200 dark:bg-stone-800 text-stone-700 dark:text-stone-300 hover:bg-stone-300 dark:hover:bg-stone-700 transition-colors"
           aria-label="Toggle Dark Mode"
         >
           {isDarkMode ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
@@ -330,9 +296,8 @@ ${genderInstruction}
               </span>
               <button 
                 onClick={toggleLanguage}
-                className="p-2 hover:bg-stone-200 dark:hover:bg-stone-600 rounded-md transition-colors shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500"
+                className="p-2 hover:bg-stone-200 dark:hover:bg-stone-600 rounded-md transition-colors shrink-0"
                 title="Swap Languages"
-                aria-label="Swap Languages"
               >
                 <ArrowRightLeft className="w-5 h-5 text-stone-600 dark:text-stone-300" />
               </button>
@@ -343,8 +308,7 @@ ${genderInstruction}
 
             <button
               onClick={toggleListening}
-              aria-label={isListening ? "Stop Listening" : "Start Dictation"}
-              className={`flex items-center justify-center gap-2 px-6 py-3 rounded-full text-base font-medium transition-colors w-full sm:w-auto my-2 sm:my-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 ${
+              className={`flex items-center justify-center gap-2 px-6 py-3 rounded-full text-base font-medium transition-colors w-full sm:w-auto my-2 sm:my-0 ${
                 isListening 
                   ? 'bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400 hover:bg-red-200 dark:hover:bg-red-900/50' 
                   : 'bg-stone-200 dark:bg-stone-800 text-stone-700 dark:text-stone-300 hover:bg-stone-300 dark:hover:bg-stone-700'
@@ -363,54 +327,20 @@ ${genderInstruction}
           </div>
           <div className="p-4 sm:p-6">
             <textarea
-              ref={textAreaRef}
-              value={inputText}
-              onChange={(e) => setInputText(e.target.value)}
+              value={inputText + (interimText ? (inputText ? ' ' : '') + interimText : '')}
+              onChange={(e) => {
+                setInputText(e.target.value);
+                setInterimText('');
+              }}
               placeholder={sourceLang === 'zh-TW' ? '請在此輸入或對話 (繁體中文)...' : 'Type or dictate your text here (English)...'}
-              aria-label={sourceLang === 'zh-TW' ? 'Input text in Traditional Chinese' : 'Input text in English'}
-              className="w-full min-h-[16rem] p-3 bg-transparent border-0 focus:ring-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/50 rounded-lg resize-none text-lg placeholder:text-stone-400 dark:placeholder:text-stone-500 dark:text-white"
+              className="w-full min-h-[16rem] p-3 bg-transparent border-0 focus:ring-0 resize-none text-lg placeholder:text-stone-400 dark:placeholder:text-stone-500 dark:text-white"
             />
           </div>
-          <div className="p-4 bg-stone-50 dark:bg-[#1e1e1e] border-t border-stone-100 dark:border-stone-800 flex flex-col lg:flex-row justify-between items-center gap-4">
-            <div className="flex flex-col sm:flex-row items-center gap-4 w-full lg:w-auto">
-              <div className="flex items-center gap-2 bg-stone-200/50 dark:bg-stone-800/50 p-1 rounded-lg w-full sm:w-auto">
-                <button
-                  onClick={() => setTranslationStyle('Natural')}
-                  className={`flex-1 sm:flex-none px-4 py-2 text-sm font-medium rounded-md transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 ${translationStyle === 'Natural' ? 'bg-white dark:bg-stone-600 shadow-sm text-stone-900 dark:text-white' : 'text-stone-500 dark:text-stone-400 hover:text-stone-700 dark:hover:text-stone-200'}`}
-                  aria-label="Natural Style"
-                >
-                  Natural
-                </button>
-                <button
-                  onClick={() => setTranslationStyle('Formal')}
-                  className={`flex-1 sm:flex-none px-4 py-2 text-sm font-medium rounded-md transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 ${translationStyle === 'Formal' ? 'bg-white dark:bg-stone-600 shadow-sm text-stone-900 dark:text-white' : 'text-stone-500 dark:text-stone-400 hover:text-stone-700 dark:hover:text-stone-200'}`}
-                  aria-label="Formal Style"
-                >
-                  Formal
-                </button>
-              </div>
-              <div className="flex items-center gap-2 bg-stone-200/50 dark:bg-stone-800/50 p-1 rounded-lg w-full sm:w-auto">
-                <button
-                  onClick={() => setRecipientGender('Male')}
-                  className={`flex-1 sm:flex-none px-4 py-2 text-sm font-medium rounded-md transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 ${recipientGender === 'Male' ? 'bg-white dark:bg-stone-600 shadow-sm text-stone-900 dark:text-white' : 'text-stone-500 dark:text-stone-400 hover:text-stone-700 dark:hover:text-stone-200'}`}
-                  aria-label="Male Recipient"
-                >
-                  Male
-                </button>
-                <button
-                  onClick={() => setRecipientGender('Female')}
-                  className={`flex-1 sm:flex-none px-4 py-2 text-sm font-medium rounded-md transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 ${recipientGender === 'Female' ? 'bg-white dark:bg-stone-600 shadow-sm text-stone-900 dark:text-white' : 'text-stone-500 dark:text-stone-400 hover:text-stone-700 dark:hover:text-stone-200'}`}
-                  aria-label="Female Recipient"
-                >
-                  Female
-                </button>
-              </div>
-            </div>
+          <div className="p-4 bg-stone-50 dark:bg-[#1e1e1e] border-t border-stone-100 dark:border-stone-800 flex justify-end">
             <button
               onClick={handleTranslate}
-              disabled={isTranslating || !inputText.trim()}
-              aria-label="Correct and Translate"
-              className="w-full sm:w-auto flex justify-center items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white px-6 py-2.5 rounded-xl font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-2 dark:focus-visible:ring-offset-[#1e1e1e]"
+              disabled={isTranslating || (!inputText.trim() && !interimText.trim())}
+              className="mt-2 sm:mt-4 flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white px-6 py-2.5 rounded-xl font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {isTranslating ? (
                 <>
@@ -431,13 +361,19 @@ ${genderInstruction}
           </div>
         )}
 
-        {result && (
+        {isTranslating && (
+          <div className="flex flex-col items-center justify-center py-16 space-y-4 bg-white dark:bg-[#1e1e1e] rounded-2xl shadow-sm border border-stone-200 dark:border-stone-800 transition-colors">
+            <Loader2 className="w-12 h-12 animate-spin text-emerald-600 dark:text-emerald-400" />
+            <p className="text-lg font-medium text-stone-600 dark:text-stone-300">Processing translation...</p>
+          </div>
+        )}
+
+        {!isTranslating && result && (
           <div className="space-y-4">
             <div className="flex justify-end">
               <button
                 onClick={toggleFavorite}
-                aria-label={isCurrentResultFavorite ? 'Remove from Favorites' : 'Save to Favorites'}
-                className={`flex items-center gap-2 px-4 py-2 rounded-full text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 ${
+                className={`flex items-center gap-2 px-4 py-2 rounded-full text-sm font-medium transition-colors ${
                   isCurrentResultFavorite
                     ? 'bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-400'
                     : 'bg-stone-200 dark:bg-stone-800 text-stone-700 dark:text-stone-300 hover:bg-stone-300 dark:hover:bg-stone-700'
@@ -475,31 +411,9 @@ ${genderInstruction}
         {/* Favorites Section */}
         {favorites.length > 0 && (
           <div className="pt-12 space-y-6">
-            <div className="flex justify-between items-center border-b border-stone-200 dark:border-stone-800 pb-2">
-              <h2 className="text-2xl font-semibold text-stone-800 dark:text-stone-200">
-                Favorites
-              </h2>
-              <div className="flex gap-2">
-                <button
-                  onClick={() => setIsClearModalOpen(true)}
-                  aria-label="Clear All Favorites"
-                  className="flex items-center gap-2 px-3 py-1.5 text-sm font-medium text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/20 hover:bg-red-100 dark:hover:bg-red-900/40 rounded-lg transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500"
-                >
-                  <Trash2 className="w-4 h-4" /> Clear All
-                </button>
-                <button
-                  onClick={handleExportAllFavorites}
-                  aria-label="Export All Favorites"
-                  className="flex items-center gap-2 px-3 py-1.5 text-sm font-medium text-stone-600 dark:text-stone-300 bg-stone-100 dark:bg-stone-800 hover:bg-stone-200 dark:hover:bg-stone-700 rounded-lg transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500"
-                >
-                  {isExportCopied ? (
-                    <><Check className="w-4 h-4 text-emerald-500" /> Copied!</>
-                  ) : (
-                    <><ClipboardCopy className="w-4 h-4" /> Export All</>
-                  )}
-                </button>
-              </div>
-            </div>
+            <h2 className="text-2xl font-semibold text-stone-800 dark:text-stone-200 border-b border-stone-200 dark:border-stone-800 pb-2">
+              Favorites
+            </h2>
             <div className="space-y-4">
               {favorites.map((fav) => (
                 <div key={fav.id} className="bg-white dark:bg-[#1e1e1e] rounded-xl shadow-sm border border-stone-200 dark:border-stone-800 p-4 transition-colors">
@@ -510,16 +424,14 @@ ${genderInstruction}
                     <div className="flex items-center gap-2">
                       <button
                         onClick={() => handleBulkCopy(fav)}
-                        aria-label="Copy favorite"
-                        className="text-stone-400 hover:text-emerald-500 transition-colors p-1 flex items-center gap-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 rounded"
+                        className="text-stone-400 hover:text-emerald-500 transition-colors p-1 flex items-center gap-1"
                         title="Bulk Copy"
                       >
                         {bulkCopiedId === fav.id ? <Check className="w-4 h-4 text-emerald-500" /> : <ClipboardCopy className="w-4 h-4" />}
                       </button>
                       <button
                         onClick={() => fav.id && deleteFavorite(fav.id)}
-                        aria-label="Delete favorite"
-                        className="text-stone-400 hover:text-red-500 transition-colors p-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500 rounded"
+                        className="text-stone-400 hover:text-red-500 transition-colors p-1"
                         title="Delete Favorite"
                       >
                         <Trash2 className="w-4 h-4" />
@@ -538,39 +450,11 @@ ${genderInstruction}
                     </div>
                     <div>
                       <h4 className="text-xs font-medium text-stone-500 dark:text-stone-400 mb-1">Pinyin</h4>
-                      <p className="text-base md:text-lg text-amber-700 dark:text-amber-400 font-medium">{fav.pinyin}</p>
+                      <p className="text-base md:text-lg text-yellow-600 dark:text-yellow-300 font-medium">{fav.pinyin}</p>
                     </div>
                   </div>
                 </div>
               ))}
-            </div>
-          </div>
-        )}
-
-        {/* Clear All Confirmation Modal */}
-        {isClearModalOpen && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm" role="dialog" aria-modal="true" aria-labelledby="clear-modal-title" aria-describedby="clear-modal-desc">
-            <div className="bg-white dark:bg-[#1e1e1e] rounded-2xl shadow-xl max-w-sm w-full p-6 space-y-6 border border-stone-200 dark:border-stone-800">
-              <div className="space-y-2 text-center">
-                <h3 id="clear-modal-title" className="text-xl font-semibold text-stone-900 dark:text-white">Clear All Favorites?</h3>
-                <p id="clear-modal-desc" className="text-stone-500 dark:text-stone-400">
-                  Are you sure you want to delete all your saved translations? This action cannot be undone.
-                </p>
-              </div>
-              <div className="flex gap-3">
-                <button
-                  onClick={() => setIsClearModalOpen(false)}
-                  className="flex-1 px-4 py-2 bg-stone-100 dark:bg-stone-800 text-stone-700 dark:text-stone-300 hover:bg-stone-200 dark:hover:bg-stone-700 rounded-xl font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-stone-500"
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={handleClearAllFavorites}
-                  className="flex-1 px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-xl font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500 focus-visible:ring-offset-2 dark:focus-visible:ring-offset-[#1e1e1e]"
-                >
-                  Delete All
-                </button>
-              </div>
             </div>
           </div>
         )}
@@ -586,8 +470,7 @@ function OutputCard({ title, content, onCopy, isCopied, isPinyin = false }: { ti
         <h3 className="font-medium text-stone-700 dark:text-stone-300">{title}</h3>
         <button
           onClick={onCopy}
-          aria-label={`Copy ${title}`}
-          className="p-2 text-stone-400 hover:text-stone-600 dark:hover:text-stone-200 hover:bg-stone-100 dark:hover:bg-stone-700 rounded-lg transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500"
+          className="p-2 text-stone-400 hover:text-stone-600 dark:hover:text-stone-200 hover:bg-stone-100 dark:hover:bg-stone-700 rounded-lg transition-colors"
           title="Copy to clipboard"
         >
           {isCopied ? <Check className="w-4 h-4 text-emerald-600 dark:text-emerald-400" /> : <Copy className="w-4 h-4" />}
@@ -597,10 +480,9 @@ function OutputCard({ title, content, onCopy, isCopied, isPinyin = false }: { ti
         <textarea
           readOnly
           value={content}
-          aria-label={`${title} output`}
-          className={`w-full h-48 md:h-64 p-0 bg-transparent border-0 focus:ring-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/50 rounded-lg resize-none leading-relaxed ${
+          className={`w-full h-48 md:h-64 p-0 bg-transparent border-0 focus:ring-0 resize-none leading-relaxed ${
             isPinyin 
-              ? 'text-lg md:text-xl text-amber-700 dark:text-amber-400 font-medium' 
+              ? 'text-lg md:text-xl text-stone-800 dark:text-yellow-300 font-medium' 
               : 'text-stone-800 dark:text-white'
           }`}
         />
