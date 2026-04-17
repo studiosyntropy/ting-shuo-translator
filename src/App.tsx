@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { GoogleGenAI, Type } from '@google/genai';
-import { Copy, Mic, MicOff, Loader2, RefreshCw, Check, Moon, Sun, ArrowRightLeft, Star, Trash2, ClipboardCopy } from 'lucide-react';
+import { Copy, Loader2, RefreshCw, Check, Moon, Sun, ArrowRightLeft, Star, Trash2, ClipboardCopy, Download } from 'lucide-react';
 
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
@@ -16,7 +16,6 @@ interface TranslationResult {
 
 export default function App() {
   const [inputText, setInputText] = useState('');
-  const [isListening, setIsListening] = useState(false);
   const [isTranslating, setIsTranslating] = useState(false);
   const [result, setResult] = useState<TranslationResult | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -30,11 +29,9 @@ export default function App() {
   const [isDarkMode, setIsDarkMode] = useState(false);
   const [sourceLang, setSourceLang] = useState<'en-US' | 'zh-TW'>('en-US');
   const [favorites, setFavorites] = useState<TranslationResult[]>([]);
+  const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
 
-  const recognitionRef = useRef<any>(null);
-  const manualStopRef = useRef(false);
   const textAreaRef = useRef<HTMLTextAreaElement>(null);
-  const silenceTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
     // Load dark mode preference
@@ -58,55 +55,17 @@ export default function App() {
       }
     }
 
-    // Initialize Speech Recognition
-    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-    if (SpeechRecognition) {
-      const recognition = new SpeechRecognition();
-      recognition.continuous = true;
-      recognition.interimResults = false;
-      
-      const resetSilenceTimer = () => {
-        if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
-        silenceTimerRef.current = setTimeout(() => {
-          manualStopRef.current = true;
-          recognition.stop();
-        }, 5000);
-      };
+    // Handle install prompt
+    const handleBeforeInstallPrompt = (e: any) => {
+      e.preventDefault();
+      setDeferredPrompt(e);
+    };
 
-      recognition.onstart = () => {
-        resetSilenceTimer();
-      };
+    window.addEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
 
-      recognition.onresult = (event: any) => {
-        resetSilenceTimer();
-        let finalTranscript = '';
-        for (let i = event.resultIndex; i < event.results.length; ++i) {
-          if (event.results[i].isFinal) {
-            finalTranscript += event.results[i][0].transcript;
-          }
-        }
-        
-        if (finalTranscript) {
-          setInputText((prev) => prev + (prev ? ' ' : '') + finalTranscript);
-        }
-      };
-
-      recognition.onerror = (event: any) => {
-        console.error('Speech recognition error', event.error);
-        if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
-        if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
-          manualStopRef.current = true;
-          setIsListening(false);
-        }
-      };
-
-      recognition.onend = () => {
-        if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
-        setIsListening(false);
-      };
-
-      recognitionRef.current = recognition;
-    }
+    return () => {
+      window.removeEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
+    };
   }, []);
 
   const toggleDarkMode = () => {
@@ -126,40 +85,9 @@ export default function App() {
     setInputText('');
   };
 
-  const toggleListening = () => {
-    if (isListening) {
-      manualStopRef.current = true;
-      if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
-      recognitionRef.current?.stop();
-      setIsListening(false);
-    } else {
-      if (recognitionRef.current) {
-        try {
-          manualStopRef.current = false;
-          // Update the SpeechRecognition language parameter to match the sourceLang
-          recognitionRef.current.lang = sourceLang === 'zh-TW' ? 'cmn-Hant-TW' : 'en-US';
-          recognitionRef.current.abort();
-          recognitionRef.current.start();
-          setIsListening(true);
-        } catch (e) {
-          console.error(e);
-        }
-      } else {
-        alert('Speech recognition is not supported in this browser.');
-      }
-    }
-  };
-
   const handleTranslate = async () => {
     const fullText = inputText.trim();
     if (!fullText) return;
-
-    if (isListening) {
-      manualStopRef.current = true;
-      if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
-      recognitionRef.current?.stop();
-      setIsListening(false);
-    }
 
     setIsTranslating(true);
     setError(null);
@@ -175,21 +103,27 @@ export default function App() {
       ? "- Gender Context: The recipient is female. Ensure the written translation uses the feminine '妳' for 'you' in natural contexts. Adjust formal honorifics appropriately (e.g., using '女士' or '小姐' for formal correspondence)."
       : "- Gender Context: The recipient is male. Ensure the written translation uses the masculine '你' for 'you' in natural contexts. Adjust formal honorifics appropriately (e.g., using '先生' for formal correspondence).";
 
+    const pinyinTarget = sourceLang === 'en-US' ? 'translation' : 'corrected_source';
+
     try {
       const response = await ai.models.generateContent({
         model: 'gemini-3.1-flash-lite-preview',
         contents: `Process the following raw speech-to-text input:\n\n"${fullText}"`,
         config: {
-          systemInstruction: `You are an expert bilingual translator and editor specializing in English and Taiwanese Traditional Chinese. Your goal is to process Speech-to-Text (STT) input and provide high-quality, natural-sounding translations and corrections.
+          systemInstruction: `You are the core intelligence engine for "聽說 TīngShuō," a high-end bilingual translation and editing application specialized for English and Taiwanese Traditional Chinese. You act as a native speaker from Taiwan with deep expertise in Syntropic Agroforestry (趨合農業) and soil science.
 
 Source language: ${sourceName}
 Target language: ${targetName}
 
 Core Objectives:
-1. Auto-Correction: Analyze the input text (which may contain STT errors) and correct spelling, grammar, and sentence flow in the source language (${sourceName}) before translating.
-2. Translation: Translate the corrected text naturally from ${sourceName} into ${targetName}.
-3. Taiwanese Localization: When translating into Traditional Chinese, use vocabulary and phrasing specific to Taiwan. Avoid literal translations; instead, use expressions a native Taiwanese person would use, while strictly maintaining the original meaning and intent.
-4. Specific Terminology: You MUST use the following terms for technical contexts:
+
+1. Voice-First Processing (STT): Your primary input is raw Speech-to-Text transcription. You must intelligently clean this input by removing filler words (um, uh, 那个), correcting homophones, and adding proper punctuation/capitalization to the source text before translating.
+
+2. Auto-Correction: Fix any grammatical or logical errors in the source language to ensure the "corrected_source" is professional and clear.
+
+3. Taiwanese Localization: All Traditional Chinese output must strictly adhere to Taiwanese usage, vocabulary, and grammar. Avoid all Mainland China idioms (e.g., use 影片 not 視頻, 軟體 not 軟件, 品質 not 質量).
+
+4. Specialized Technical Terminology: Strictly apply these translations for agricultural and ecological contexts:
     - "Target crop" -> "主要作物"
     - "Soil food web" -> "土壤食物網"
     - "Rhizophagy cycle" -> "根噬循環"
@@ -197,18 +131,21 @@ Core Objectives:
     - "Succession" -> "演替"
     - "Strata" -> "分層"
     - "Syntropic agroforestry" -> "趨合農業"
-5. Formatting: Provide the output in a structured format (JSON) so the application can separate the English, Chinese, and Pinyin into individual text fields with their own copy buttons.
 
-Output Structure:
-Return ONLY a JSON object with the following keys:
-- "corrected_source": The input text after spelling and grammar fixes.
-- "translation": The localized translation.
-- "pinyin": The Hanyu Pinyin for the Chinese text (without the Hanzi characters).
+Pinyin Standards (CRITICAL): The 'pinyin' field MUST include proper Unicode tone marks above the vowels for every single syllable that carries a tone. 
+- INCORRECT: Nin hao, jinlai ke hao (No tone marks)
+- INCORRECT: Nin2 hao3, jin4lai2 ke3 hao3 (Numbered tones)
+- CORRECT: Nín hǎo, jìnlái kě hǎo (Proper Unicode tone marks)
+You are strictly forbidden from outputting Pinyin without Unicode tone marks unless a syllable is grammatically neutral. 
+It must contain ONLY Pinyin text. Do not include Hanzi/Characters. Since the translation direction is ${sourceName} -> ${targetName}, the Pinyin MUST accurately reflect the exact pronunciation of the Chinese text in the '${pinyinTarget}' field.
 
 Tone and Style:
 ${styleInstruction}
 ${genderInstruction}
-- For English translations, use modern, idiomatic English.`,
+- For English translations, use modern, idiomatic English.
+
+Output Requirements:
+Return ONLY a valid JSON object. Do not include any introductory text, markdown explanations, or closing remarks.`,
           responseMimeType: 'application/json',
           responseSchema: {
             type: Type.OBJECT,
@@ -295,12 +232,31 @@ ${genderInstruction}
     localStorage.setItem('favorites', JSON.stringify(newFavs));
   };
 
+  const handleInstallClick = async () => {
+    if (!deferredPrompt) return;
+    deferredPrompt.prompt();
+    const { outcome } = await deferredPrompt.userChoice;
+    if (outcome === 'accepted') {
+      setDeferredPrompt(null);
+    }
+  };
+
   const isCurrentResultFavorite = result && favorites.some(f => f.id === result.id);
 
   return (
     <div className={`min-h-screen font-sans transition-colors duration-200 ${isDarkMode ? 'dark bg-[#121212] text-[#ffffff]' : 'bg-[#ffffff] text-[#121212]'}`}>
       {/* Top Navigation */}
-      <nav className="p-4 flex justify-end max-w-4xl mx-auto">
+      <nav className="p-4 flex justify-end items-center gap-3 max-w-4xl mx-auto">
+        {deferredPrompt && (
+          <button
+            onClick={handleInstallClick}
+            className="flex items-center gap-2 px-4 py-2 rounded-full bg-emerald-600 text-white hover:bg-emerald-700 transition-colors text-sm font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500"
+            aria-label="Add to Homescreen"
+          >
+            <Download className="w-4 h-4" />
+            Add to Homescreen
+          </button>
+        )}
         <button
           onClick={toggleDarkMode}
           className="p-2 rounded-full bg-stone-200 dark:bg-stone-800 text-stone-700 dark:text-stone-300 hover:bg-stone-300 dark:hover:bg-stone-700 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500"
@@ -340,33 +296,13 @@ ${genderInstruction}
                 {sourceLang === 'en-US' ? 'Traditional Chinese' : 'English'}
               </span>
             </div>
-
-            <button
-              onClick={toggleListening}
-              aria-label={isListening ? "Stop Listening" : "Start Dictation"}
-              className={`flex items-center justify-center gap-2 px-6 py-3 rounded-full text-base font-medium transition-colors w-full sm:w-auto my-2 sm:my-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 ${
-                isListening 
-                  ? 'bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400 hover:bg-red-200 dark:hover:bg-red-900/50' 
-                  : 'bg-stone-200 dark:bg-stone-800 text-stone-700 dark:text-stone-300 hover:bg-stone-300 dark:hover:bg-stone-700'
-              }`}
-            >
-              {isListening ? (
-                <>
-                  <MicOff className="w-4 h-4" /> Stop Listening
-                </>
-              ) : (
-                <>
-                  <Mic className="w-4 h-4" /> Start Dictation
-                </>
-              )}
-            </button>
           </div>
           <div className="p-4 sm:p-6">
             <textarea
               ref={textAreaRef}
               value={inputText}
               onChange={(e) => setInputText(e.target.value)}
-              placeholder={sourceLang === 'zh-TW' ? '請在此輸入或對話 (繁體中文)...' : 'Type or dictate your text here (English)...'}
+              placeholder={sourceLang === 'zh-TW' ? '請在此輸入 (繁體中文)...' : 'Type your text here (English)...'}
               aria-label={sourceLang === 'zh-TW' ? 'Input text in Traditional Chinese' : 'Input text in English'}
               className="w-full min-h-[16rem] p-3 bg-transparent border-0 focus:ring-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/50 rounded-lg resize-none text-lg placeholder:text-stone-400 dark:placeholder:text-stone-500 dark:text-white"
             />
